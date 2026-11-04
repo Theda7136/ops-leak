@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+enum ProjectStatus {
+  ACTIVE
+  AT_RISK
+  COMPLETED
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  CRITICAL
+}
+
+enum BottleneckType {
+  MATERIAL_DELAY
+  EQUIPMENT_FAILURE
+  LABOR_IDLE
+  WEATHER
+  OTHER
+}
+
+model Project {
+  id               String              @id @default(cuid())
+  name             String
+  clientName       String
+  totalBudget      Float             
+  startDate        DateTime
+  estimatedEndDate DateTime
+  status           ProjectStatus       @default(ACTIVE)
+  reports          DailyReport[]
+  alerts           OperationalAlert[]
+
+  @@index([status])
+}
+
+model DailyReport {
+  id             String   @id @default(cuid())
+  projectId      String
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date           DateTime @default(now())
+  rawContent     String   
+  hoursLogged    Float
+  materialCosts  Float
+  supervisorName String
+
+  @@index([projectId, date])
+}
+
+model OperationalAlert {
+  id                String         @id @default(cuid())
+  projectId         String
+  project           Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  severity          Severity
+  bottleneckType    BottleneckType
+  summary           String
+  actionRecommended String
+  createdAt         DateTime       @default(now())
+
+  @@index([projectId, severity])
+  @@index([createdAt])
+}
