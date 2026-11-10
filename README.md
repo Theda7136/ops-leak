@@ -1,8 +1,8 @@
-OpsLeak
+# OpsLeak
 
 Aplicación de inteligencia operacional para equipos de campo, servicios y logística. Centraliza reportes diarios, compara los costos de material con el presupuesto de los proyectos y utiliza Grok (xAI) para identificar cuellos de botella y proponer acciones.
 
-La interfaz está en español y utiliza un tablero de tema oscuro. El proyecto está en desarrollo: existen bloqueos de compilación y funciones pendientes descritos en [Estado actual](#estado-actual-y-limitaciones).
+La interfaz está en español. El parte de obra usa un fondo cálido, títulos en Anybody y texto en Atkinson Hyperlegible.
 
 ## Contenido
 
@@ -29,7 +29,7 @@ La interfaz está en español y utiliza un tablero de tema oscuro. El proyecto e
 - **Análisis con IA:** resumen de la jornada, severidad, tipo de cuello de botella y acción recomendada.
 - **Cambio de estado:** un proyecto activo pasa a estar en riesgo cuando el análisis genera una alerta moderada o crítica.
 - **Persistencia ante fallos de IA:** el reporte se guarda antes de consultar Grok y se conserva si el análisis falla.
-- **Formulario de alta de proyectos:** disponible en la interfaz, pero pendiente de completar los campos de fecha exigidos por la base de datos.
+- **Alta de proyectos:** nombre, cliente, presupuesto, inicio y cierre estimado.
 
 No hay carga de audio ni transcripción implementada. Las notas se introducen como texto.
 
@@ -47,7 +47,7 @@ Versiones declaradas en `package.json`; las resoluciones exactas están en `pack
 | IA | Grok mediante el SDK `openai` 4.104, dirigido a la API de xAI |
 | Datos iniciales | Script TypeScript ejecutado con `tsx` |
 
-**Base de datos efectiva:** `prisma/schema.prisma` utiliza SQLite con `url = "file:./dev.db"`. Aunque `.env.example`, algunos mensajes y `.cursorrules.md` mencionan PostgreSQL, esa no es la conexión activa del código actual.
+**Base de datos efectiva:** `prisma/schema.prisma` utiliza SQLite con `url = "file:./dev.db"`. Ese archivo local no se versiona.
 
 ## Instalación local
 
@@ -111,17 +111,16 @@ No crea reportes ni alertas. Si encuentra un proyecto con el mismo nombre, actua
 npm run dev
 ```
 
-Abre [http://localhost:3000](http://localhost:3000). La raíz redirige a `/dashboard`.
-
-**Antes de considerar la instalación funcional**, resuelve los bloqueos de código descritos en [Estado actual](#estado-actual-y-limitaciones). Estos comandos documentan el procedimiento del proyecto; no garantizan que la revisión actual compile sin cambios.
+Abre [http://localhost:3000](http://localhost:3000). La raíz redirige a `/dashboard`. Si el puerto 3000 está ocupado, Next.js usa el siguiente disponible.
 
 ## Configuración
 
 | Variable | Uso actual | Valor de referencia |
 | --- | --- | --- |
 | `XAI_API_KEY` | Credencial del servidor para analizar reportes con xAI | Clave propia; nunca incluirla en el repositorio |
-| `GROK_MODEL` | Modelo enviado a la API | `grok-3` si la variable no está definida |
-| `DATABASE_URL` | Aparece en el ejemplo, pero el esquema SQLite actual no la lee | El ejemplo contiene una URL de PostgreSQL |
+| `GROK_MODEL` | Modelo enviado a la API, limitado a una lista permitida | `grok-3` si falta o no está permitida |
+| `GROK_API_KEY` | Alternativa de servidor si `XAI_API_KEY` está vacía | No incluirla en el repositorio |
+| `OPSLEAK_ACCESS_KEY` | Clave de acceso. Obligatoria en producción (mínimo 12 caracteres) | Vacía en local deja la consola abierta |
 
 Configuración mínima para IA:
 
@@ -145,7 +144,8 @@ La moneda de presentación está fijada en `USD` mediante `DISPLAY_CURRENCY` en 
 | `/` | Redirección al tablero |
 | `/dashboard` | KPIs, ejecución presupuestaria y alertas |
 | `/reports/new` | Registro de una jornada |
-| `/projects/new` | Formulario de proyecto, actualmente incompleto |
+| `/projects/new` | Alta de un proyecto |
+| `/login` | Acceso cuando `OPSLEAK_ACCESS_KEY` está configurada |
 
 ### Registrar una jornada
 
@@ -174,7 +174,7 @@ Validaciones principales: notas de al menos 10 caracteres, nombre de supervisor 
 
 El consumo presupuestario se muestra en verde por debajo del 85 %, en ámbar desde el 85 % y en rojo desde el 100 %. Si no hay presupuesto positivo, el porcentaje se considera desconocido. La barra visual se limita al 100 %, aunque el porcentaje mostrado puede superarlo.
 
-La lista de proyectos en curso incluye `ACTIVE` y `AT_RISK`. El feed contiene todas las alertas, de más reciente a más antigua, sin paginación.
+La lista de proyectos en curso incluye `ACTIVE` y `AT_RISK`. El feed muestra hasta 40 alertas, de más reciente a más antigua.
 
 El ejecutado contempla únicamente materiales: las horas registradas no se convierten en costos, y las estimaciones de sobrecosto de Grok no se suman al presupuesto. Las barras representan consumo presupuestario, no avance físico de la obra. Alcanzar un umbral de presupuesto cambia el color, pero no cambia por sí mismo el estado del proyecto.
 
@@ -210,9 +210,9 @@ Ejemplo ilustrativo del contrato de respuesta, validado con Zod:
 - Cuellos de botella: `MATERIAL_DELAY`, `EQUIPMENT_FAILURE`, `LABOR_IDLE`, `WEATHER`, `OTHER`.
 - Todo análisis válido crea una alerta, incluso con severidad `LOW`.
 - Una alerta `MEDIUM` o `CRITICAL` cambia un proyecto `ACTIVE` a `AT_RISK`. No existe retorno automático a `ACTIVE`.
-- `hoursLost` y `costImpact` se validan, pero actualmente no se guardan ni se muestran.
+- `hoursLost` y `costImpact` se guardan en la alerta y se muestran cuando son mayores que cero.
 
-Si falta la clave, la petición falla o el JSON no cumple el esquema, el reporte ya guardado se conserva. El servidor devuelve éxito con una advertencia, pero el formulario redirige al tablero sin mostrar ese mensaje. No existe un mecanismo de reanálisis implementado.
+Si falta la clave, la petición falla o el JSON no cumple el esquema, el reporte ya guardado se conserva y el formulario muestra la advertencia. Hay un límite de intentos por minuto. No existe un mecanismo de reanálisis implementado.
 
 ## Modelo de datos
 
@@ -222,7 +222,7 @@ Definido en `prisma/schema.prisma`:
 | --- | --- |
 | `Project` | `id`, `name`, `clientName`, `totalBudget`, `startDate`, `estimatedEndDate`, `status` |
 | `DailyReport` | `id`, `projectId`, `date`, `rawContent`, `hoursLogged`, `materialCosts`, `supervisorName` |
-| `OperationalAlert` | `id`, `projectId`, `severity`, `bottleneckType`, `summary`, `actionRecommended`, `createdAt` |
+| `OperationalAlert` | `id`, `projectId`, `severity`, `bottleneckType`, `summary`, `actionRecommended`, `hoursLost`, `costImpact`, `createdAt` |
 
 Un proyecto tiene múltiples reportes y alertas. Ambas relaciones tienen eliminación en cascada. No existe una relación directa entre una alerta y el reporte que originó su análisis.
 
@@ -241,7 +241,9 @@ app/
   projects/new/page.tsx       Alta de proyectos
   reports/new/page.tsx        Pantalla de reporte
   actions/reports.ts          Server Action para reportes
-  actions.ts                  Formulario duplicado; contiene JSX en archivo .ts
+  actions/projects.ts         Server Action para proyectos
+  actions/access.ts           Server Action de acceso
+  login/page.tsx              Pantalla de clave
 components/
   dashboard/                  KPIs, proyectos y feed de alertas
   layout/                     Navegación y contenedor de la aplicación
@@ -257,7 +259,7 @@ lib/
 prisma/
   schema.prisma               Modelos y datasource SQLite
   seed.ts                     Proyectos de demostración
-  dev.db                      Base local presente en el proyecto
+  dev.db                      Base local, ignorada por Git
 types/index.ts                Tipos, enumeraciones, etiquetas y moneda
 ```
 
@@ -282,9 +284,7 @@ Las páginas del tablero y de reportes son dinámicas y consultan la base en el 
 
 No hay una suite de pruebas automatizadas ni un script `test` configurado. Para revisar cambios, valida el esquema, ejecuta TypeScript, lint y build; después comprueba manualmente el flujo afectado.
 
-En la revisión que acompaña este README, `prisma validate` confirmó que el esquema es válido. TypeScript y lint fallaron en `app/actions.ts`: contiene JSX, pero su extensión es `.ts`. No se ejecutó una compilación de producción ni una consulta real a xAI.
-
-Una vez corregidos los bloqueos, comprueba en una base de desarrollo:
+Comprueba en una base de desarrollo:
 
 1. Carga del tablero con los proyectos del seed.
 2. Registro de una jornada y aumento del costo ejecutado.
@@ -296,7 +296,7 @@ La severidad depende de la respuesta del modelo; una prueba reproducible de esa 
 
 ## Despliegue
 
-El repositorio no incluye configuración de contenedores, pipeline de CI/CD ni historial de migraciones. Antes de desplegar, deben resolverse los bloqueos de compilación y alta de proyectos.
+El repositorio no incluye configuración de contenedores, pipeline de CI/CD ni historial de migraciones. En producción define `OPSLEAK_ACCESS_KEY` antes de publicar.
 
 El procedimiento previsto para un servidor Node.js, después de preparar la base y el entorno, es:
 
@@ -307,40 +307,31 @@ npm run build
 npm start
 ```
 
-La compilación usa `next/font/google` para obtener Inter y puede necesitar conectividad a Google Fonts. La base SQLite requiere almacenamiento persistente y escribible; un disco efímero no conserva reportes entre despliegues. No ejecutes el seed automáticamente sobre datos operativos.
+La compilación usa `next/font/google` para Anybody y Atkinson Hyperlegible, y puede necesitar conectividad a Google Fonts. La base SQLite requiere almacenamiento persistente y escribible; un disco efímero no conserva reportes entre despliegues. No ejecutes el seed automáticamente sobre datos operativos.
 
-No hay autenticación ni separación por organización. Para una publicación con datos reales se debe implementar control de acceso y definir el tratamiento de los datos enviados a xAI. `.env` está ignorado por Git; `prisma/dev.db` no lo está en la configuración actual y debe revisarse antes de compartir el repositorio.
+En producción la aplicación responde 503 si falta `OPSLEAK_ACCESS_KEY`. Con la clave definida, el acceso es `/login` y la sesión queda en una cookie `httpOnly`. No hay usuarios ni separación por organización. `.env` y `prisma/dev.db` están ignorados por Git.
 
 ## Solución de problemas
 
 | Síntoma | Causa o siguiente comprobación |
 | --- | --- |
-| TypeScript muestra errores de JSX o de sintaxis en `app/actions.ts` | El archivo contiene JSX con extensión `.ts`; hay que resolver la duplicación o usar una estructura y extensión adecuadas |
-| No se puede crear un proyecto | El alta omite `startDate` y `estimatedEndDate`, obligatorios y sin valores por defecto en Prisma |
+| No se puede crear un proyecto | Revisa nombre, cliente, presupuesto positivo y que el cierre no sea anterior al inicio |
 | El tablero no puede leer datos | Comprueba el archivo SQLite, permisos, esquema sincronizado y Prisma Client generado; el mensaje sobre `DATABASE_URL` no refleja el datasource actual |
 | No aparecen proyectos en el formulario | No hay proyectos no completados o falló la consulta; usa el seed solo en desarrollo y revisa los logs |
-| Se guarda el reporte, pero no aparece alerta | Comprueba `XAI_API_KEY`, el modelo, conectividad y el contrato de respuesta; el formulario no muestra la advertencia del servidor |
+| Se guarda el reporte, pero no aparece alerta | Comprueba `XAI_API_KEY` o `GROK_API_KEY`, el modelo, conectividad y el contrato de respuesta; el formulario muestra la advertencia |
 | Cambiar `DATABASE_URL` no cambia la base | La URL está fijada en `schema.prisma` |
 | Prisma informa tablas inexistentes o un cliente desactualizado | Revisa la base seleccionada y ejecuta `db:generate` y `db:push` según corresponda |
-| La compilación falla al cargar Inter | Comprueba el acceso a Google Fonts o prepara una fuente local como cambio de implementación |
+| La compilación falla al cargar las fuentes | Comprueba el acceso a Google Fonts o prepara fuentes locales |
 | Lint avisa sobre `next lint` o falla por configuración | El script usa `next lint`, y el proyecto combina ESLint 9 con `.eslintrc.json`; revisa su compatibilidad al actualizar la configuración |
 
 ## Estado actual y limitaciones
 
-### Bloqueos y discrepancias encontrados
-
-- `app/actions.ts` contiene JSX en un archivo `.ts` y bloquea la comprobación de TypeScript.
-- Tanto ese archivo como `app/projects/new/page.tsx` crean proyectos sin las fechas requeridas por el esquema.
-- El proveedor real es SQLite; el ejemplo de entorno y varios mensajes todavía hacen referencia a PostgreSQL.
-- El mensaje de guardado sin análisis no se presenta al usuario tras enviar el reporte.
-
 ### Alcance pendiente
 
-- Autenticación, roles y aislamiento entre organizaciones.
+- Usuarios, roles y aislamiento entre organizaciones. La clave compartida no sustituye esas cuentas.
 - Edición, cierre y eliminación de proyectos desde la interfaz.
 - Historial detallado, edición o eliminación de reportes.
 - Resolución de alertas, filtros, paginación y notificaciones externas.
-- Persistencia de horas perdidas y sobrecostos estimados por IA.
 - Reanálisis de reportes y procesamiento en segundo plano.
 - Transacción conjunta entre reporte, alerta y cambio de estado: actualmente las escrituras son separadas y pueden quedar parcialmente completadas.
 - Prevención de duplicados al reenviar un reporte.
