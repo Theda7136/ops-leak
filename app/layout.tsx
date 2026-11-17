@@ -1,12 +1,19 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Anybody, Atkinson_Hyperlegible } from "next/font/google";
 
 import { AppShell } from "@/components/layout/app-shell";
 import "./globals.css";
 
-const inter = Inter({
+const display = Anybody({
   subsets: ["latin"],
-  variable: "--font-sans",
+  weight: ["500", "700"],
+  variable: "--font-display",
+});
+
+const body = Atkinson_Hyperlegible({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-body",
 });
 
 export const metadata: Metadata = {
@@ -22,7 +29,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body className={`${inter.className} antialiased`}>
+      <body className={`${display.variable} ${body.variable}`}>
         <AppShell>{children}</AppShell>
       </body>
     </html>

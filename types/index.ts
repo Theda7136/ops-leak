@@ -53,6 +53,8 @@ export interface OperationalAlertItem {
   bottleneckType: BottleneckType;
   summary: string;
   actionRecommended: string;
+  hoursLost: number;
+  costImpact: number;
   createdAt: Date;
 }
 

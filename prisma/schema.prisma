@@ -62,6 +62,8 @@ model OperationalAlert {
   bottleneckType    BottleneckType
   summary           String
   actionRecommended String
+  hoursLost         Float          @default(0)
+  costImpact        Float          @default(0)
   createdAt         DateTime       @default(now())
 
   @@index([projectId, severity])

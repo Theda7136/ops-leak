@@ -1,10 +1,12 @@
 import "server-only";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 
 import { analyzeDailyReport, GrokAnalysisError } from "@/lib/grok";
 import { prisma } from "@/lib/prisma";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { reportSchema } from "@/lib/schemas";
+import { noonUtcFromDateInput, safeErrorText } from "@/lib/text";
 import {
   PROJECT_STATUSES,
   type ProjectContext,
@@ -12,25 +14,6 @@ import {
   type ReportActionResult,
   type ReportProjectOption,
 } from "@/types";
-
-const reportSchema = z.object({
-  projectId: z.string().min(1, "Selecciona un proyecto."),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Indica una fecha válida."),
-  rawContent: z
-    .string()
-    .trim()
-    .min(10, "Describe la jornada con al menos 10 caracteres."),
-  hoursLogged: z.coerce
-    .number({ invalid_type_error: "Las horas deben ser un número." })
-    .nonnegative("Las horas no pueden ser negativas."),
-  materialCosts: z.coerce
-    .number({ invalid_type_error: "Los costos deben ser un número." })
-    .nonnegative("Los costos no pueden ser negativos."),
-  supervisorName: z
-    .string()
-    .trim()
-    .min(2, "Indica el nombre del supervisor."),
-});
 
 function toNumber(value: number | null | undefined): number {
   return value ?? 0;
@@ -46,11 +29,14 @@ function isDatabaseUnavailable(error: unknown): boolean {
   }
 
   const code = "code" in error ? error.code : undefined;
+  const message = error.message.toLowerCase();
 
   return (
     error.name === "PrismaClientInitializationError" ||
     code === "P1001" ||
-    error.message.includes("Can't reach database server")
+    message.includes("can't reach database server") ||
+    message.includes("unable to open database") ||
+    message.includes("sqlite")
   );
 }
 
@@ -68,7 +54,7 @@ export async function listReportProjects(): Promise<{
     return { projects, unavailable: false };
   } catch (error) {
     if (!isDatabaseUnavailable(error)) {
-      console.error("No se pudieron cargar los proyectos.", error);
+      console.error("No se pudieron cargar los proyectos.", safeErrorText(error));
     }
 
     return { projects: [], unavailable: true };
@@ -78,6 +64,13 @@ export async function listReportProjects(): Promise<{
 export async function submitDailyReport(
   input: unknown,
 ): Promise<ReportActionResult> {
+  if (!consumeRateLimit("submit-report", 12, 60_000)) {
+    return {
+      ok: false,
+      message: "Demasiados reportes en poco tiempo. Espera un minuto.",
+    };
+  }
+
   const parsed = reportSchema.safeParse(input);
 
   if (!parsed.success) {
@@ -90,8 +83,12 @@ export async function submitDailyReport(
   try {
     const project = await prisma.project.findUnique({
       where: { id: parsed.data.projectId },
-      include: {
-        reports: { select: { materialCosts: true } },
+      select: {
+        id: true,
+        name: true,
+        clientName: true,
+        totalBudget: true,
+        status: true,
       },
     });
 
@@ -106,26 +103,25 @@ export async function submitDailyReport(
       };
     }
 
-    const spentToDate = project.reports.reduce(
-      (sum, report) => sum + toNumber(report.materialCosts),
-      0,
-    );
+    const spent = await prisma.dailyReport.aggregate({
+      where: { projectId: project.id },
+      _sum: { materialCosts: true },
+    });
+
     const projectContext: ProjectContext = {
       name: project.name,
       clientName: project.clientName,
       totalBudget: toNumber(project.totalBudget),
       status: project.status,
-      spentToDate,
+      spentToDate: toNumber(spent._sum.materialCosts),
       hoursLogged: parsed.data.hoursLogged,
       materialCosts: parsed.data.materialCosts,
     };
 
-    const reportDate = new Date(`${parsed.data.date}T12:00:00.000Z`);
-
     await prisma.dailyReport.create({
       data: {
         projectId: project.id,
-        date: reportDate,
+        date: noonUtcFromDateInput(parsed.data.date),
         rawContent: parsed.data.rawContent,
         hoursLogged: parsed.data.hoursLogged,
         materialCosts: parsed.data.materialCosts,
@@ -146,6 +142,8 @@ export async function submitDailyReport(
           bottleneckType: analysis.bottleneckType,
           summary: analysis.summary,
           actionRecommended: analysis.actionRecommended,
+          hoursLost: analysis.hoursLost,
+          costImpact: analysis.costImpact,
         },
       });
 
@@ -159,8 +157,9 @@ export async function submitDailyReport(
         });
       }
     } catch (error) {
+      revalidatePath("/dashboard");
+
       if (error instanceof GrokAnalysisError) {
-        revalidatePath("/dashboard");
         return {
           ok: true,
           message:
@@ -168,7 +167,12 @@ export async function submitDailyReport(
         };
       }
 
-      throw error;
+      console.error("No se pudo guardar la alerta.", safeErrorText(error));
+      return {
+        ok: true,
+        message:
+          "El reporte quedó guardado, pero no se pudo registrar la alerta.",
+      };
     }
 
     revalidatePath("/dashboard");
@@ -180,11 +184,11 @@ export async function submitDailyReport(
     if (isDatabaseUnavailable(error)) {
       return {
         ok: false,
-        message: "No se pudo escribir en PostgreSQL. Revisa DATABASE_URL.",
+        message: "No se pudo escribir en la base de datos.",
       };
     }
 
-    console.error("No se pudo registrar el reporte diario.", error);
+    console.error("No se pudo registrar el reporte diario.", safeErrorText(error));
     return {
       ok: false,
       message: "No se pudo registrar el reporte. Inténtalo de nuevo.",

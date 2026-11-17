@@ -20,11 +20,14 @@ function isDatabaseUnavailable(error: unknown): boolean {
   }
 
   const code = "code" in error ? error.code : undefined;
+  const message = error.message.toLowerCase();
 
   return (
     error.name === "PrismaClientInitializationError" ||
     code === "P1001" ||
-    error.message.includes("Can't reach database server")
+    message.includes("can't reach database server") ||
+    message.includes("unable to open database") ||
+    message.includes("sqlite")
   );
 }
 
@@ -65,14 +68,9 @@ function emptyDashboard(): ExecutiveDashboard {
 
 export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
   try {
-    const [projects, projectsAtRisk, criticalAlerts, alertRows] = await Promise.all([
+    const [projects, projectsAtRisk, criticalAlerts, alertRows, spendRows] = await Promise.all([
       prisma.project.findMany({
         orderBy: { name: "asc" },
-        include: {
-          reports: {
-            select: { materialCosts: true },
-          },
-        },
       }),
       prisma.project.count({
         where: { status: "AT_RISK" },
@@ -82,13 +80,22 @@ export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
       }),
       prisma.operationalAlert.findMany({
         orderBy: { createdAt: "desc" },
+        take: 40,
         include: {
           project: {
             select: { name: true },
           },
         },
       }),
+      prisma.dailyReport.groupBy({
+        by: ["projectId"],
+        _sum: { materialCosts: true },
+      }),
     ]);
+
+    const spentByProject = new Map(
+      spendRows.map((row) => [row.projectId, toNumber(row._sum.materialCosts)]),
+    );
 
     const alerts: OperationalAlertItem[] = alertRows.map((alert) => ({
       id: alert.id,
@@ -97,6 +104,8 @@ export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
       bottleneckType: alert.bottleneckType,
       summary: alert.summary,
       actionRecommended: alert.actionRecommended,
+      hoursLost: toNumber(alert.hoursLost),
+      costImpact: toNumber(alert.costImpact),
       createdAt: alert.createdAt,
     }));
 
@@ -106,10 +115,7 @@ export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
 
     for (const project of projects) {
       const budget = toNumber(project.totalBudget);
-      const spent = project.reports.reduce(
-        (sum, report) => sum + toNumber(report.materialCosts),
-        0,
-      );
+      const spent = spentByProject.get(project.id) ?? 0;
 
       totalBudget += budget;
       totalSpent += spent;
@@ -147,7 +153,7 @@ export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
     };
   } catch (error) {
     if (isDatabaseUnavailable(error)) {
-      console.warn("PostgreSQL no está disponible. El tablero muestra ceros.");
+      console.warn("La base de datos no está disponible. El tablero muestra ceros.");
       return emptyDashboard();
     }
 

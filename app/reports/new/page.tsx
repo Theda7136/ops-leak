@@ -1,50 +1,32 @@
 import { ReportForm } from "@/components/reports/report-form";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { listReportProjects } from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Nuevo reporte · OpsLeak",
+  title: "Nueva jornada · OpsLeak",
 };
 
 export default async function NewReportPage() {
   const { projects, unavailable } = await listReportProjects();
 
   return (
-    <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">Reporte de campo</h1>
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Registra la jornada en texto libre. OpsLeak guarda las horas y los costos,
-          y pide a Grok una alerta accionable.
+    <div className="form-panel">
+      <header>
+        <p className="kicker">Campo</p>
+        <h1>Nueva jornada</h1>
+        <p className="lede">
+          Escribe lo que pasó en obra. OpsLeak guarda horas y costos, y pide a Grok una acción.
         </p>
       </header>
 
       {unavailable ? (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          No se pudieron cargar los proyectos. Revisa la conexión a PostgreSQL antes
-          de registrar una jornada.
-        </div>
+        <p className="notice">
+          No se pudieron cargar los proyectos. Revisa que la base local esté disponible.
+        </p>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Jornada</CardTitle>
-          <CardDescription>
-            Proyecto, notas informales, horas invertidas y costos del día.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ReportForm projects={projects} />
-        </CardContent>
-      </Card>
-    </>
+      <ReportForm projects={projects} />
+    </div>
   );
 }
